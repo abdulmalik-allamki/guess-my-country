@@ -1,0 +1,1356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0a0e1a">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GuessCountry">
+<meta name="description" content="Two phones, one country on your forehead. Ask yes/no questions until you guess it.">
+<title>Guess My Country</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Righteous&display=swap" rel="stylesheet">
+<style>
+:root {
+  --teal: #38d9a9; --gold: #ffd43b; --red: #ff6b6b; --purple: #b197fc;
+  --bg: #0a0e1a; --card: rgba(22,30,50,0.92); --text: #e2e8f0; --dim: #7c8aa0;
+  --line: rgba(255,255,255,0.12);
+  /* Motion tokens. ease-out for anything entering or answering a tap; the spring
+     (a little overshoot) only for the rare celebratory moments. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --display: 'Righteous', 'Nunito', system-ui, sans-serif;
+  --body: 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+/* Windows has no flag emoji, so flags would show as two letters ("JP"). This font
+   holds only the flags and is switched on by the script only where they are missing.
+   Phones keep their own flags. Font: Twemoji graphics (CC-BY 4.0), built by TalkJS (MIT). */
+@font-face {
+  font-family: "Twemoji Country Flags";
+  unicode-range: U+1F1E6-1F1FF;
+  src: url('/fonts/TwemojiCountryFlags.woff2') format('woff2');
+  font-display: swap;
+}
+html.flagfont {
+  --display: 'Twemoji Country Flags', 'Righteous', 'Nunito', system-ui, sans-serif;
+  --body: 'Twemoji Country Flags', 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+/* Registered so the timer ring can glide between updates instead of stepping. */
+@property --p { syntax: '<number>'; inherits: false; initial-value: 100; }
+* { box-sizing: border-box; margin: 0; }
+[hidden] { display: none !important; }
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+  background: var(--bg);
+}
+body {
+  font-family: var(--body); font-weight: 700; line-height: 1.35;
+  color: var(--text); background: var(--bg);
+  min-height: 100vh; min-height: 100dvh;
+}
+/* The two glow orbs: teal top-left, purple bottom-right. */
+body::before, body::after {
+  content: ""; position: fixed; z-index: 0; pointer-events: none;
+  width: 90vmax; height: 90vmax; border-radius: 50%;
+}
+body::before { top: -45vmax; left: -45vmax; background: radial-gradient(circle, rgba(56,217,169,0.16), transparent 62%); }
+body::after { bottom: -45vmax; right: -45vmax; background: radial-gradient(circle, rgba(177,151,252,0.15), transparent 62%); }
+
+.app {
+  position: relative; z-index: 1;
+  max-width: 480px; margin: 0 auto;
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; flex-direction: column;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px))
+           calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+}
+.screen { display: none; flex: 1; flex-direction: column; gap: 14px; }
+.screen.active { display: flex; animation: slideUp 0.26s var(--ease-out) both; }
+.spacer { flex: 1; min-height: 4px; }
+.dock {
+  position: sticky; bottom: 0; z-index: 5; display: grid; gap: 8px;
+  margin: 0 -16px calc(-16px - env(safe-area-inset-bottom, 0px));
+  padding: 14px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to bottom, rgba(10,14,26,0), var(--bg) 14px);
+}
+.dock .link { justify-self: center; }
+
+/* Tracking follows size: big display type is pulled in, small text opened a touch. */
+h1, h2, .display { font-family: var(--display); font-weight: 400; letter-spacing: -0.005em; }
+h2 { font-size: 26px; }
+.dim { color: var(--dim); }
+.center { text-align: center; }
+.small { font-size: 14px; letter-spacing: 0.01em; }
+
+.card {
+  background: var(--card);
+  border: 1px solid rgba(56,217,169,0.18);
+  border-radius: 18px; padding: 18px;
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  /* the inset line is light catching the top edge of the glass */
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 0 28px rgba(56,217,169,0.05), 0 12px 40px rgba(0,0,0,0.35);
+}
+
+/* ---- buttons ---- */
+.btn {
+  appearance: none; -webkit-appearance: none; border: 0; width: 100%;
+  min-height: 54px; padding: 14px 18px; border-radius: 14px;
+  font: 800 17px/1.15 var(--body); color: #052a20; background: var(--teal);
+  box-shadow: 0 8px 26px rgba(56,217,169,0.3);
+  transition: transform 0.12s var(--ease-out), filter 0.12s, opacity 0.15s;
+  touch-action: manipulation; cursor: pointer;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.btn:active:not(:disabled) { transform: scale(0.97); filter: brightness(0.94); }
+.btn:disabled { opacity: 0.42; box-shadow: none; cursor: default; }
+.btn:focus-visible, .chip:focus-visible, .link:focus-visible, .input:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.btn.big { min-height: 68px; font-size: 21px; font-weight: 900; }
+.btn.two-line { display: grid; gap: 2px; justify-items: center; align-content: center; padding-block: 10px; }
+.btn.two-line small { font: 800 13px/1.1 var(--body); opacity: 0.75; }
+.btn.purple { background: var(--purple); color: #1c1244; box-shadow: 0 8px 26px rgba(177,151,252,0.3); }
+.btn.gold { background: var(--gold); color: #3a2c00; box-shadow: 0 8px 26px rgba(255,212,59,0.26); }
+.btn.ghost { background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid var(--line); box-shadow: none; }
+.btn.quiet-red { background: none; color: var(--red); box-shadow: none; min-height: 44px; font-size: 15px; }
+/* Hold to confirm: the fill is slow while the thumb decides, and snaps back on release. */
+.hold { position: relative; overflow: hidden; touch-action: none; /* a held thumb must not turn into a scroll */ }
+.hold::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: rgba(255,107,107,0.24);
+  clip-path: inset(0 100% 0 0); transition: clip-path 0.2s var(--ease-out);
+}
+.hold.holding::before { clip-path: inset(0 0 0 0); transition: clip-path 1s linear; }
+.hold.holding { transform: scale(0.97); }
+.link {
+  appearance: none; border: 0; background: none; color: var(--dim);
+  font: 800 15px var(--body); min-height: 44px; padding: 10px 14px; border-radius: 10px;
+  touch-action: manipulation; cursor: pointer; user-select: none; -webkit-user-select: none;
+}
+.link:active { color: var(--text); }
+.row { display: flex; gap: 10px; align-items: center; }
+.row > * { flex: 1; }
+
+/* ---- inputs ---- */
+label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
+.input {
+  width: 100%; min-height: 54px; padding: 12px 16px; border-radius: 14px;
+  border: 1.5px solid var(--line); background: rgba(10,14,26,0.6);
+  color: var(--text); font: 800 18px var(--body);
+}
+.input:focus { border-color: var(--teal); outline: none; }
+.input::placeholder { color: #55627a; }
+.input.code {
+  font: 800 34px ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  letter-spacing: 10px; text-align: center; text-transform: uppercase; padding-left: 26px;
+}
+.error { color: var(--red); font-size: 15px; min-height: 20px; margin: 6px 0 8px; }
+.shake { animation: shake 0.4s; }
+
+/* ---- home ---- */
+.logo { font-size: clamp(38px, 12vw, 52px); line-height: 0.98; letter-spacing: -0.015em; text-align: center; margin-top: 10px; }
+.logo span { color: var(--teal); }
+.tagline { text-align: center; color: var(--dim); font-size: 16px; }
+.demo {
+  align-self: center; width: min(230px, 62vw); padding: 14px 12px 12px; text-align: center;
+  background: linear-gradient(160deg, rgba(56,217,169,0.14), rgba(177,151,252,0.14));
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 18px;
+  transform: rotate(-3deg);
+}
+.demo .flag { font-size: 58px; line-height: 1.1; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.45)); }
+.demo .name { font-family: var(--display); font-size: 24px; }
+.demo.swap .flag, .demo.swap .name { animation: pop 0.4s var(--ease-out); }
+.how { counter-reset: how; display: grid; gap: 8px; font-size: 15px; color: var(--dim); padding-left: 0; list-style: none; }
+.how li { counter-increment: how; display: flex; gap: 10px; align-items: baseline; }
+.how li::before { content: counter(how); font-family: var(--display); color: var(--gold); min-width: 14px; }
+
+/* ---- lobby ---- */
+.code-wrap { text-align: center; padding: 22px 12px 18px; }
+.room-code {
+  appearance: none; border: 0; background: none; cursor: pointer; display: block; width: 100%;
+  font: 400 48px/1.1 var(--display); letter-spacing: 10px; padding-left: 10px;
+  color: var(--gold); text-shadow: 0 0 40px rgba(255,212,59,0.2);
+  touch-action: manipulation; user-select: text; -webkit-user-select: text;
+}
+.qr { display: block; width: 176px; height: 176px; margin: 14px auto 8px; border-radius: 14px; }
+.players { display: grid; gap: 10px; }
+.player { display: flex; align-items: center; gap: 12px; font-size: 18px; min-height: 28px; }
+.player.enter { animation: rise 0.3s var(--ease-out) both; }
+.player .tag { margin-left: auto; font-size: 13px; color: var(--dim); }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 10px rgba(56,217,169,0.7); flex: none; }
+.dot.off { background: #46526a; box-shadow: none; }
+.dot.wait { background: var(--gold); box-shadow: 0 0 10px rgba(255,212,59,0.6); animation: pulse 1.3s ease-in-out infinite; }
+.chips { display: flex; gap: 8px; }
+.chip {
+  appearance: none; flex: 1; min-height: 46px; border-radius: 12px; cursor: pointer;
+  border: 1.5px solid var(--line); background: rgba(255,255,255,0.04);
+  color: var(--text); font: 800 16px var(--body);
+  touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  transition: transform 0.12s var(--ease-out), background 0.15s, border-color 0.15s;
+}
+.chip:active:not(:disabled) { transform: scale(0.95); }
+.chip[aria-pressed="true"] { background: rgba(56,217,169,0.16); border-color: var(--teal); color: var(--teal); }
+.chip:disabled { cursor: default; }
+.chip:disabled:not([aria-pressed="true"]) { opacity: 0.4; }
+.setting + .setting { margin-top: 14px; }
+
+/* ---- playing ---- */
+.scorebar { display: flex; align-items: center; gap: 8px; }
+.pill {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 14px; border-radius: 999px; font-size: 15px;
+}
+.pill b { font: 400 20px var(--display); display: inline-block; }
+.bump { animation: bump 0.34s var(--ease-out); }
+.tick { animation: tick 0.16s var(--ease-out); }
+.pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill.me { background: rgba(56,217,169,0.16); color: var(--teal); border: 1px solid rgba(56,217,169,0.4); }
+.pill.opp { background: rgba(255,107,107,0.14); color: var(--red); border: 1px solid rgba(255,107,107,0.38); flex-direction: row-reverse; }
+.round-no { flex: none; font-size: 13px; color: var(--dim); text-align: center; line-height: 1.15; }
+.round-no b { display: block; font: 400 17px var(--display); color: var(--text); }
+
+.ring {
+  --p: 100; --ring: var(--teal);
+  align-self: center; width: 92px; height: 92px; border-radius: 50%; flex: none;
+  background: conic-gradient(var(--ring) calc(var(--p) * 1%), rgba(255,255,255,0.08) 0);
+  display: grid; place-items: center;
+  transition: --p 0.25s linear; /* constant motion, so linear */
+}
+.ring::before { content: ""; grid-area: 1/1; width: 74px; height: 74px; border-radius: 50%; background: var(--bg); }
+.ring b { grid-area: 1/1; z-index: 1; font: 400 30px var(--display); }
+.ring.urgent { --ring: var(--red); color: var(--red); animation: pulse 0.9s ease-in-out infinite; }
+
+.stage { display: flex; flex-direction: column; gap: 14px; }
+.secret { text-align: center; display: grid; gap: 10px; padding: 16px; }
+.secret .q {
+  font: 400 54px/1 var(--display); color: var(--gold);
+  text-shadow: 0 0 40px rgba(255,212,59,0.25);
+}
+.hint-chip {
+  justify-self: center; padding: 6px 14px; border-radius: 999px; font-size: 15px;
+  background: rgba(255,212,59,0.14); color: var(--gold); border: 1px solid rgba(255,212,59,0.4);
+}
+.counter { display: flex; align-items: center; gap: 10px; }
+.counter .count { flex: 1; }
+.counter .count b { font: 400 30px/1 var(--display); display: block; }
+.counter .count span { font-size: 13px; color: var(--dim); }
+.sq {
+  appearance: none; flex: none; width: 54px; height: 54px; border-radius: 14px; cursor: pointer;
+  border: 1.5px solid var(--line); background: rgba(255,255,255,0.06); color: var(--text);
+  font: 900 20px var(--body); touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  transition: transform 0.1s var(--ease-out);
+}
+.sq.plus { width: 84px; background: rgba(177,151,252,0.2); border-color: var(--purple); color: var(--purple); }
+.sq:active:not(:disabled) { transform: scale(0.93); }
+.sq:disabled { opacity: 0.35; }
+.status-line { text-align: center; font-size: 14px; color: var(--dim); min-height: 19px; }
+
+/* ---- waiting / reveal / game over ---- */
+.result-flag { font-size: clamp(72px, 24vw, 120px); line-height: 1.1; text-align: center; filter: drop-shadow(0 8px 18px rgba(0,0,0,0.5)); }
+.headline { font: 400 30px/1.1 var(--display); letter-spacing: -0.01em; text-align: center; }
+/* End of your round: the card finally turns over, then the words follow. */
+#screen-waiting.active .result-flag { animation: flipIn 0.5s var(--ease-out) 0.06s both; }
+#screen-waiting.active #wait-headline { animation: rise 0.3s var(--ease-out) 0.2s both; }
+#screen-waiting.active #wait-sub { animation: rise 0.3s var(--ease-out) 0.27s both; }
+/* Reveal and game over: a short stagger so the eye is led down the result. */
+.rv.enter { animation: rise 0.32s var(--ease-out) both; }
+.rv.enter + .rv.enter { animation-delay: 0.07s; }
+#screen-gameover.active .trophy { animation: trophy 0.6s var(--spring) 0.05s both; }
+#screen-gameover.active .headline { animation: rise 0.3s var(--ease-out) 0.18s both; }
+#screen-gameover.active .final > div { animation: rise 0.34s var(--ease-out) 0.26s both; }
+#screen-gameover.active .final > div + div { animation-delay: 0.33s; }
+.headline.teal { color: var(--teal); } .headline.red { color: var(--red); } .headline.gold { color: var(--gold); }
+.rv { display: flex; align-items: center; gap: 14px; }
+.rv + .rv { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.rv .flag { font-size: 46px; line-height: 1; flex: none; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.45)); }
+.rv .who { font-size: 13px; color: var(--dim); }
+.rv .country { font: 400 21px/1.15 var(--display); }
+.rv .mid { flex: 1; min-width: 0; }
+.rv .out { flex: none; text-align: right; font-size: 13px; color: var(--dim); }
+.rv .out b { display: block; font: 400 24px/1 var(--display); color: var(--teal); }
+.rv .out.miss b { color: var(--red); font-size: 17px; }
+.final { display: flex; gap: 12px; }
+.final > div { flex: 1; min-width: 0; text-align: center; padding: 16px 8px; border-radius: 16px; }
+.final .me { background: rgba(56,217,169,0.14); border: 1px solid rgba(56,217,169,0.4); color: var(--teal); }
+.final .opp { background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.36); color: var(--red); }
+.final b { display: block; font: 400 52px/1 var(--display); }
+.final span { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; }
+.trophy { font-size: 84px; line-height: 1; text-align: center; }
+
+/* ---- stats / history ---- */
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile { padding: 16px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); }
+.tile b { display: block; font: 400 34px/1 var(--display); color: var(--teal); }
+.tile span { font-size: 14px; color: var(--dim); }
+.tile.wide { grid-column: 1 / -1; }
+.hist { display: grid; gap: 8px; }
+.hrow { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.hrow .mid { flex: 1; min-width: 0; }
+.hrow .mid div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .score { font: 400 20px var(--display); }
+.badge { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font: 400 17px var(--display); }
+.badge.W { background: rgba(56,217,169,0.18); color: var(--teal); }
+.badge.L { background: rgba(255,107,107,0.16); color: var(--red); }
+.badge.D { background: rgba(255,212,59,0.16); color: var(--gold); }
+.badge.A { background: rgba(255,255,255,0.08); color: var(--dim); }
+
+/* ---- forehead mode: the whole stage is turned 180deg so the person across reads it ---- */
+#forehead {
+  position: fixed; inset: 0; z-index: 50;
+  background:
+    radial-gradient(90vmax 90vmax at 0% 0%, rgba(56,217,169,0.16), transparent 62%),
+    radial-gradient(90vmax 90vmax at 100% 100%, rgba(177,151,252,0.15), transparent 62%),
+    var(--bg);
+  display: grid; place-items: center; text-align: center; cursor: pointer;
+  padding: env(safe-area-inset-top, 0px) 12px env(safe-area-inset-bottom, 0px);
+  user-select: none; -webkit-user-select: none; touch-action: manipulation;
+  /* Closed. It grows out of the Forehead Mode button (the script sets the origin) and
+     shrinks back into it. Transitions, not keyframes, so a tap mid-way reverses cleanly;
+     leaving is quicker than arriving. */
+  opacity: 0; visibility: hidden; pointer-events: none; transform: scale(0.9);
+  transition: opacity 0.16s var(--ease-out), transform 0.16s var(--ease-out), visibility 0s linear 0.16s;
+}
+#forehead.open {
+  opacity: 1; visibility: visible; pointer-events: auto; transform: none;
+  transition: opacity 0.24s var(--ease-out), transform 0.3s var(--ease-out), visibility 0s;
+}
+#forehead .count-stage { display: grid; gap: 14px; }
+#forehead .count-num { font: 400 150px/1 var(--display); color: var(--gold); text-shadow: 0 0 60px rgba(255,212,59,0.35); }
+#forehead .count-num.tick { animation: countTick 0.34s var(--ease-out); }
+#forehead .count-stage p { font-size: 20px; }
+#forehead .show-stage { transform: rotate(180deg); display: grid; gap: 6px; width: 100%; animation: materialize 0.38s var(--ease-out) both; }
+#forehead .flag { font-size: clamp(90px, 28vw, 160px); line-height: 1.15; filter: drop-shadow(0 12px 28px rgba(0,0,0,0.55)); }
+#forehead .name { font: 400 clamp(40px, 12.5vw, 76px)/1.02 var(--display); letter-spacing: -0.015em; text-wrap: balance; overflow-wrap: anywhere; }
+#forehead .continent { font-size: clamp(18px, 5.4vw, 28px); color: var(--teal); margin-top: 8px; }
+#forehead[data-stage="count"] .show-stage, #forehead[data-stage="show"] .count-stage { display: none; }
+
+/* ---- overlays ---- */
+#reconnecting {
+  position: fixed; inset: 0; z-index: 60; background: rgba(10,14,26,0.86);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  display: grid; place-items: center; padding: 24px;
+  animation: fadeIn 0.2s var(--ease-out) both;
+}
+#reconnecting .box { display: grid; gap: 14px; justify-items: center; text-align: center; }
+#reconnecting .dot { width: 16px; height: 16px; background: var(--gold); box-shadow: 0 0 16px rgba(255,212,59,0.7); animation: pulse 1.1s ease-in-out infinite; }
+.banner {
+  padding: 10px 14px; border-radius: 12px; font-size: 14px; text-align: center;
+  background: rgba(255,212,59,0.12); color: var(--gold); border: 1px solid rgba(255,212,59,0.35);
+  animation: rise 0.25s var(--ease-out) both;
+}
+#toast {
+  position: fixed; z-index: 70; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+  max-width: min(420px, calc(100vw - 32px)); padding: 12px 18px; border-radius: 14px;
+  background: #1b2540; border: 1px solid var(--line); box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+  font-size: 15px; text-align: center;
+  transition: transform 0.25s var(--ease-out), opacity 0.25s;
+}
+#toast.on { transform: translate(-50%, 0); opacity: 1; }
+#confetti { position: fixed; inset: 0; z-index: 40; pointer-events: none; overflow: hidden; }
+#confetti i { position: absolute; top: -20px; width: 10px; height: 16px; border-radius: 2px; animation: confettiFall linear forwards; }
+
+@keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes fadeIn { from { opacity: 0; } }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes shake { 20%, 60% { transform: translateX(-7px); } 40%, 80% { transform: translateX(7px); } }
+@keyframes pulse { 50% { transform: scale(1.08); opacity: 0.72; } }
+/* the blur hides the moment where the old and the new flag would both be visible */
+@keyframes pop { from { opacity: 0; transform: scale(0.94); filter: blur(4px); } }
+@keyframes bump { 40% { transform: scale(1.3); } }
+@keyframes tick { from { transform: scale(1.16); } }
+@keyframes countTick { from { transform: scale(1.22); opacity: 0.35; } }
+@keyframes materialize { from { opacity: 0; transform: rotate(180deg) scale(0.9); filter: blur(10px); } }
+@keyframes flipIn { from { opacity: 0; transform: perspective(700px) rotateY(80deg) scale(0.92); } }
+@keyframes trophy { from { opacity: 0; transform: scale(0.6) rotate(-14deg); } }
+@keyframes confettiFall { to { transform: translate3d(var(--dx, 0), 110vh, 0) rotate(var(--rot, 540deg)); opacity: 0.9; } }
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) { filter: brightness(1.07); }
+  .chip:hover:not(:disabled), .sq:hover:not(:disabled) { border-color: rgba(255,255,255,0.3); }
+  .link:hover { color: var(--text); }
+}
+/* Short screens (small phones, or Safari with both bars showing): the clock sits beside
+   the hidden card and everything tightens, so a round fits without scrolling. */
+@media (max-height: 720px) {
+  .screen { gap: 10px; }
+  .card { padding: 14px; }
+  .stage { flex-direction: row; align-items: center; gap: 12px; }
+  .ring { width: 76px; height: 76px; } .ring::before { width: 60px; height: 60px; } .ring b { font-size: 25px; }
+  .secret { flex: 1; min-width: 0; padding: 12px; gap: 8px; }
+  .secret .q { display: none; } .secret p { font-size: 14px; }
+  .btn.big { min-height: 60px; font-size: 20px; }
+  .code-wrap { padding: 12px; } .room-code { font-size: 40px; }
+  .qr { width: 140px; height: 140px; margin: 8px auto 6px; }
+  #btn-share { margin-top: 8px !important; min-height: 46px; }
+  .setting + .setting { margin-top: 10px; }
+  .logo { font-size: clamp(32px, 10vw, 44px); margin-top: 0; }
+  .demo { padding: 8px 10px; } .demo .flag { font-size: 42px; } .demo .name { font-size: 20px; }
+  .trophy { font-size: 64px; }
+}
+/* Reduced motion means gentler, not none: movement goes, short fades stay, because
+   a screen that swaps with no bridge at all is its own kind of jarring. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; }
+  .screen.active, #reconnecting { animation: fadeIn 0.2s ease both !important; }
+  #forehead, #forehead.open { transform: none; }
+  .btn:active:not(:disabled), .chip:active:not(:disabled), .sq:active:not(:disabled), .hold.holding { transform: none; }
+  #toast, #toast.on { transform: translate(-50%, 0); }
+  .ring { transition: none; }
+  #confetti { display: none; }
+}
+/* Someone who asked for less transparency or more contrast gets solid, bordered surfaces. */
+@media (prefers-reduced-transparency: reduce) {
+  .card, .tile, .hrow { background: #161e32; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  #reconnecting { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-contrast: more) {
+  :root { --dim: #b4c0d2; --line: rgba(255,255,255,0.45); }
+  .card, .tile, .hrow { background: #121a2c; border-color: rgba(255,255,255,0.55); }
+}
+</style>
+</head>
+<body>
+<main class="app">
+
+  <!-- 1. Home -->
+  <section class="screen active" id="screen-home">
+    <h1 class="logo">Guess<br>My <span>Country</span></h1>
+    <p class="tagline">Two phones. One country on your forehead.</p>
+    <div class="demo" id="demo" aria-hidden="true">
+      <div class="flag" id="demo-flag">🇯🇵</div>
+      <div class="name" id="demo-name">Japan</div>
+    </div>
+    <div class="card">
+      <label for="name-home">Your name</label>
+      <input class="input" id="name-home" maxlength="16" autocomplete="given-name" autocapitalize="words" enterkeyhint="done" placeholder="e.g. Abdul">
+      <p class="error" id="home-error" role="alert"></p>
+      <div style="display:grid;gap:10px">
+        <button class="btn" id="btn-create">Create room</button>
+        <button class="btn purple" id="btn-to-join">Join room</button>
+      </div>
+    </div>
+    <ol class="how">
+      <li>One of you creates a room, the other joins with the code.</li>
+      <li>Hold your phone on your forehead. Your friend can read your country, you cannot.</li>
+      <li>Ask yes or no questions until you guess it. Fewer questions, more points.</li>
+    </ol>
+    <div class="spacer"></div>
+    <div class="row">
+      <button class="link" id="btn-stats">Stats</button>
+      <button class="link" id="btn-history">History</button>
+    </div>
+  </section>
+
+  <!-- 2. Join -->
+  <section class="screen" id="screen-join">
+    <h2 class="center" style="margin-top:10px">Join a room</h2>
+    <div class="card" id="join-card">
+      <label for="name-join">Your name</label>
+      <input class="input" id="name-join" maxlength="16" autocomplete="given-name" autocapitalize="words" enterkeyhint="next" placeholder="e.g. Sara">
+      <label for="code-input" style="margin-top:14px">Room code</label>
+      <input class="input code" id="code-input" maxlength="5" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go" placeholder="•••••" aria-describedby="join-error">
+      <p class="error" id="join-error" role="alert"></p>
+      <button class="btn" id="btn-join">Join room</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="link" id="btn-join-back">Back</button>
+  </section>
+
+  <!-- 3. Lobby -->
+  <section class="screen" id="screen-lobby">
+    <div class="card code-wrap">
+      <p class="dim small">Room code</p>
+      <button class="room-code" id="room-code" aria-label="Copy room code">-----</button>
+      <div id="qr-wrap" hidden>
+        <svg class="qr" id="qr" role="img" aria-label="QR code that opens this room" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path fill="#0a0e1a"/></svg>
+        <p class="dim small">Your friend scans this with their phone camera to join.</p>
+      </div>
+      <button class="btn ghost" id="btn-share" style="margin-top:14px">Share invite link</button>
+    </div>
+    <div class="card">
+      <div class="players" id="lobby-players"></div>
+    </div>
+    <div class="card">
+      <div class="setting">
+        <label id="lbl-rounds">Rounds</label>
+        <div class="chips" id="chips-rounds" role="group" aria-labelledby="lbl-rounds"></div>
+      </div>
+      <div class="setting">
+        <label id="lbl-time">Seconds per round</label>
+        <div class="chips" id="chips-time" role="group" aria-labelledby="lbl-time"></div>
+      </div>
+      <p class="dim small" id="settings-note" style="margin-top:12px" hidden>The host chooses the settings.</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="dock">
+      <p class="status-line" id="lobby-status"></p>
+      <button class="btn big" id="btn-start">Start game</button>
+      <button class="link" id="btn-leave-lobby">Leave room</button>
+    </div>
+  </section>
+
+  <!-- 4. Playing -->
+  <section class="screen" id="screen-playing">
+    <div class="scorebar">
+      <div class="pill me"><span class="js-me-name">You</span><b class="js-me-score">0</b></div>
+      <div class="round-no">Round<b class="js-round">1/5</b></div>
+      <div class="pill opp"><span class="js-opp-name">Opponent</span><b class="js-opp-score">0</b></div>
+    </div>
+    <div class="banner js-opp-offline" hidden></div>
+    <div class="stage">
+      <div class="ring" id="ring" role="timer" aria-label="Seconds left"><b id="ring-num">60</b></div>
+      <div class="card secret">
+        <div class="q" aria-hidden="true">?</div>
+        <p class="dim">Your country is hidden. Only your friend should see it.</p>
+        <div class="hint-chip" id="hint-chip" hidden></div>
+        <button class="btn gold" id="btn-forehead">📱 Forehead Mode</button>
+      </div>
+    </div>
+    <div class="counter">
+      <button class="sq" id="btn-q-minus" aria-label="Undo one question">−</button>
+      <div class="count center"><b id="q-count">0</b><span>questions asked</span></div>
+      <button class="sq plus" id="btn-q-plus" aria-label="Count one question">+1</button>
+    </div>
+    <button class="link" id="btn-hint">💡 Continent hint (costs 2 questions)</button>
+    <p class="status-line" id="opp-status"></p>
+    <div class="spacer"></div>
+    <div class="dock">
+      <button class="btn big two-line" id="btn-got"><span>✅ I Got It!</span><small id="q-worth"></small></button>
+      <button class="btn quiet-red hold" id="btn-giveup">Hold to give up</button>
+    </div>
+  </section>
+
+  <!-- 6. Waiting -->
+  <section class="screen" id="screen-waiting">
+    <div class="scorebar">
+      <div class="pill me"><span class="js-me-name">You</span><b class="js-me-score">0</b></div>
+      <div class="round-no">Round<b class="js-round">1/5</b></div>
+      <div class="pill opp"><span class="js-opp-name">Opponent</span><b class="js-opp-score">0</b></div>
+    </div>
+    <div class="banner js-opp-offline" hidden></div>
+    <div class="spacer"></div>
+    <div class="result-flag" id="wait-flag"></div>
+    <p class="headline" id="wait-headline"></p>
+    <p class="center" id="wait-sub"></p>
+    <div class="spacer"></div>
+    <div class="card center">
+      <div class="row" style="justify-content:center;gap:10px"><span class="dot wait" style="flex:none"></span><span id="wait-for" style="flex:none">Waiting…</span></div>
+      <p class="dim small" id="wait-timer" style="margin-top:6px"></p>
+    </div>
+  </section>
+
+  <!-- 7. Round reveal -->
+  <section class="screen" id="screen-reveal">
+    <h2 class="center" id="reveal-title" style="margin-top:6px">Round 1</h2>
+    <div class="card" id="reveal-rows"></div>
+    <div class="scorebar">
+      <div class="pill me"><span class="js-me-name">You</span><b class="js-me-score">0</b></div>
+      <div class="pill opp"><span class="js-opp-name">Opponent</span><b class="js-opp-score">0</b></div>
+    </div>
+    <div class="banner js-opp-offline" hidden></div>
+    <div class="spacer"></div>
+    <div class="dock">
+      <p class="status-line" id="reveal-status"></p>
+      <button class="btn big" id="btn-next">Next round</button>
+      <button class="link" id="btn-quit">Leave game</button>
+    </div>
+  </section>
+
+  <!-- 8. Game over -->
+  <section class="screen" id="screen-gameover">
+    <div class="spacer"></div>
+    <div class="trophy" id="over-emoji">🏆</div>
+    <p class="headline" id="over-headline"></p>
+    <p class="center dim" id="over-sub"></p>
+    <div class="final">
+      <div class="me"><b id="over-me-score">0</b><span id="over-me-name">You</span></div>
+      <div class="opp"><b id="over-opp-score">0</b><span id="over-opp-name">Opponent</span></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="dock">
+      <button class="btn big" id="btn-again">Play again</button>
+      <button class="btn ghost" id="btn-home">Home</button>
+    </div>
+  </section>
+
+  <!-- 9. Stats -->
+  <section class="screen" id="screen-stats">
+    <h2 class="center" style="margin-top:10px">Your stats</h2>
+    <div class="tiles" id="stats-tiles"></div>
+    <p class="center dim" id="stats-empty" hidden>No games yet. Create a room to play your first.</p>
+    <div class="spacer"></div>
+    <button class="link js-back-home">Back</button>
+  </section>
+
+  <!-- 10. History -->
+  <section class="screen" id="screen-history">
+    <h2 class="center" style="margin-top:10px">Last games</h2>
+    <div class="hist" id="hist-list"></div>
+    <p class="center dim" id="hist-empty" hidden>No games yet. Finished games show up here.</p>
+    <div class="spacer"></div>
+    <button class="link js-back-home">Back</button>
+  </section>
+</main>
+
+<!-- 5. Forehead mode -->
+<div id="forehead" data-stage="count" aria-hidden="true" role="dialog" aria-label="Forehead mode. Tap anywhere to close.">
+  <div class="count-stage">
+    <div class="count-num" id="fh-count">3</div>
+    <p>Phone on your forehead,<br>screen facing your friend</p>
+    <p class="dim small">Tap anywhere to close</p>
+  </div>
+  <div class="show-stage">
+    <div class="flag" id="fh-flag"></div>
+    <div class="name" id="fh-name"></div>
+    <div class="continent" id="fh-continent"></div>
+  </div>
+</div>
+
+<div id="reconnecting" hidden role="status">
+  <div class="box">
+    <span class="dot"></span>
+    <p class="headline" style="font-size:24px">Reconnecting…</p>
+    <p class="dim small">Your place in the game is kept.</p>
+    <button class="link" id="btn-rc-leave">Leave game</button>
+  </div>
+</div>
+<div id="confetti" aria-hidden="true"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- flags: does this device draw flag emoji itself? A colour glyph ignores the
+// fill colour, so drawing it in white and in black gives the same pixel. Letters do not.
+try {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  cx.textBaseline = 'top'; cx.font = '100px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; cx.scale(0.01, 0.01);
+  const px = (ch, fill) => { cx.clearRect(0, 0, 100, 100); cx.fillStyle = fill; cx.fillText(ch, 0, 0); return cx.getImageData(0, 0, 1, 1).data.join(','); };
+  const colour = (ch) => { const w = px(ch, '#fff'), k = px(ch, '#000'); return w === k && !k.startsWith('0,0,0,'); };
+  if (colour('😊') && !colour('🇨🇭')) document.documentElement.classList.add('flagfont');
+} catch {}
+
+// ---------- storage (per device). ?as=2 gives a second identity in the same browser, for testing.
+const params = new URLSearchParams(location.search);
+const profile = (params.get('as') || '').replace(/[^a-z0-9]/gi, '').slice(0, 8);
+const KEY = (k) => 'gmc.' + (profile ? profile + '.' : '') + k;
+const store = {
+  get(k, d = null) { try { const v = localStorage.getItem(KEY(k)); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(KEY(k), JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(KEY(k)); } catch {} },
+};
+const rand = (n) => crypto.getRandomValues(new Uint8Array(n));
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no O 0 I 1
+const newCode = () => [...rand(5)].map((b) => ALPHABET[b % 32]).join('');
+const cleanCode = (s) => [...String(s).toUpperCase()].filter((c) => ALPHABET.includes(c)).slice(0, 5).join('');
+
+let playerId = store.get('pid');
+if (!playerId) { playerId = [...rand(16)].map((b) => b.toString(16).padStart(2, '0')).join(''); store.set('pid', playerId); }
+
+// ---------- state
+const S = {
+  local: 'home',       // which screen to show when not in a room
+  name: store.get('name', ''),
+  room: null,          // last room_update from the server
+  code: null, intent: null, seated: false, resume: false,
+  ws: null, closing: false, retry: 0, retryTimer: null, createTries: 0,
+  offset: 0,           // server clock minus this phone's clock
+  oppName: 'Opponent', oppScore: 0,
+};
+const $ = (id) => document.getElementById(id);
+const all = (sel) => document.querySelectorAll(sel);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+const meOf = (r) => r[r.you];
+const oppOf = (r) => r[r.you === 'host' ? 'guest' : 'host'];
+const scoreFor = (q, hint) => { const n = q + (hint ? 2 : 0); return Math.max(1, 10 - n) + (n <= 3 ? 3 : 0); };
+
+/*QR-START*/
+// A small QR encoder: byte mode, error-correction level L, versions 1 to 5 (up to 106
+// bytes), which is plenty for an invite link. Returns rows of booleans (true = dark),
+// or null if the text is too long. test/run.mjs checks it against known-good output.
+function makeQR(text, forceMask) {
+  const bytes = [...new TextEncoder().encode(text)];
+  const CAP = [19, 34, 55, 80, 108], ECC = [7, 10, 15, 20, 26];
+  let v = 0;
+  while (v < 5 && bytes.length > CAP[v] - 2) v++;
+  if (v === 5) return null;
+  const n = 21 + 4 * v, dataLen = CAP[v], eccLen = ECC[v];
+
+  // 1. The bit stream: mode, length, the bytes, terminator, padding.
+  const bits = [];
+  const push = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+  push(4, 4); push(bytes.length, 8);
+  for (const b of bytes) push(b, 8);
+  push(0, Math.min(4, dataLen * 8 - bits.length));
+  while (bits.length % 8) bits.push(0);
+  const data = [];
+  for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+  for (let pad = 0xec; data.length < dataLen; pad ^= 0xec ^ 0x11) data.push(pad);
+
+  // 2. Reed-Solomon error correction over GF(256), polynomial 0x11D.
+  const mul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11d); z ^= ((y >>> i) & 1) * x; } return z; };
+  const gen = Array(eccLen).fill(0); gen[eccLen - 1] = 1;
+  for (let i = 0, root = 1; i < eccLen; i++, root = mul(root, 2)) {
+    for (let j = 0; j < eccLen; j++) { gen[j] = mul(gen[j], root); if (j + 1 < eccLen) gen[j] ^= gen[j + 1]; }
+  }
+  const ecc = Array(eccLen).fill(0);
+  for (const b of data) {
+    const f = b ^ ecc.shift(); ecc.push(0);
+    for (let i = 0; i < eccLen; i++) ecc[i] ^= mul(gen[i], f);
+  }
+  const all = data.concat(ecc);
+
+  // 3. The fixed patterns. fn marks modules that are not data.
+  const m = Array.from({ length: n }, () => Array(n).fill(false));
+  const fn = Array.from({ length: n }, () => Array(n).fill(false));
+  const set = (x, y, dark) => { m[y][x] = dark; fn[y][x] = true; };
+  for (let i = 0; i < n; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  for (const [cx, cy] of [[3, 3], [n - 4, 3], [3, n - 4]]) {
+    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+      const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy));
+      if (x >= 0 && x < n && y >= 0 && y < n) set(x, y, d !== 2 && d !== 4);
+    }
+  }
+  if (v > 0) {
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      set(n - 7 + dx, n - 7 + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }
+  }
+  const format = (mask) => {
+    const d = (1 << 3) | mask; // level L is 01
+    let rem = d;
+    for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    const f = ((d << 10) | rem) ^ 0x5412;
+    const bit = (i) => ((f >>> i) & 1) === 1;
+    for (let i = 0; i <= 5; i++) set(8, i, bit(i));
+    set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+    for (let i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+    for (let i = 0; i < 8; i++) set(n - 1 - i, 8, bit(i));
+    for (let i = 8; i < 15; i++) set(8, n - 15 + i, bit(i));
+    set(8, n - 8, true);
+  };
+  format(0);
+
+  // 4. Data, zig-zagging up and down in two-module columns from the bottom right.
+  let k = 0;
+  for (let right = n - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let vert = 0; vert < n; vert++) for (let j = 0; j < 2; j++) {
+      const x = right - j, up = ((right + 1) & 2) === 0, y = up ? n - 1 - vert : vert;
+      if (!fn[y][x] && k < all.length * 8) { m[y][x] = ((all[k >>> 3] >>> (7 - (k & 7))) & 1) === 1; k++; }
+    }
+  }
+
+  // 5. Masking: try all eight, keep the one a scanner will find easiest.
+  const MASKS = [
+    (x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x, y) => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+    (x, y) => ((x / 3 | 0) + (y / 2 | 0)) % 2 === 0, (x, y) => (x * y) % 2 + (x * y) % 3 === 0,
+    (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0, (x, y) => ((x + y) % 2 + (x * y) % 3) % 2 === 0,
+  ];
+  const apply = (mask) => { for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (!fn[y][x] && MASKS[mask](x, y)) m[y][x] = !m[y][x]; };
+  const penalty = () => {
+    let p = 0, dark = 0;
+    for (let a = 0; a < n; a++) {
+      for (const line of [m[a].map((c) => (c ? 1 : 0)).join(''), m.map((r) => (r[a] ? 1 : 0)).join('')]) {
+        for (const run of line.match(/0+|1+/g)) if (run.length >= 5) p += run.length - 2;
+        p += 40 * (line.match(/(?=10111010000)|(?=00001011101)/g) || []).length;
+      }
+    }
+    for (let y = 0; y < n - 1; y++) for (let x = 0; x < n - 1; x++) {
+      const c = m[y][x];
+      if (c === m[y][x + 1] && c === m[y + 1][x] && c === m[y + 1][x + 1]) p += 3;
+    }
+    for (const r of m) for (const c of r) if (c) dark++;
+    return p + 10 * Math.floor(Math.abs(dark * 20 - n * n * 10) / (n * n));
+  };
+  let best = forceMask;
+  if (best === undefined) {
+    let bestScore = Infinity;
+    for (let mask = 0; mask < 8; mask++) {
+      apply(mask); format(mask);
+      const score = penalty();
+      if (score < bestScore) { bestScore = score; best = mask; }
+      apply(mask); // masking twice undoes it
+    }
+  }
+  apply(best); format(best);
+  return m;
+}
+/*QR-END*/
+function drawQR(svg, text) {
+  const m = makeQR(text);
+  if (!m) return false;
+  const n = m.length, quiet = 4;
+  let d = '';
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (m[y][x]) d += `M${x + quiet},${y + quiet}h1v1h-1z`;
+  svg.setAttribute('viewBox', `0 0 ${n + 2 * quiet} ${n + 2 * quiet}`);
+  svg.querySelector('path').setAttribute('d', d);
+  return true;
+}
+
+// ---------- small UI helpers
+let currentScreen = 'home';
+function show(name) {
+  if (currentScreen === name) return;
+  currentScreen = name;
+  for (const s of all('.screen')) s.classList.toggle('active', s.id === 'screen-' + name);
+  window.scrollTo(0, 0);
+}
+let toastTimer;
+function toast(text) {
+  const t = $('toast'); t.textContent = text; t.classList.add('on');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 2800);
+}
+function retrigger(node, cls) { node.classList.remove(cls); void node.offsetWidth; node.classList.add(cls); }
+function shake(node) { retrigger(node, 'shake'); }
+function setAll(sel, text) { for (const n of all(sel)) n.textContent = text; }
+// A score that goes up gets a small bump, so the eye catches whose number moved.
+function setScores(sel, value) {
+  for (const n of all(sel)) {
+    const rose = n.dataset.set === '1' && Number(n.textContent) < value;
+    n.textContent = value; n.dataset.set = '1';
+    if (rose) retrigger(n, 'bump');
+  }
+}
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+// Haptics, on the same frame as the thing they belong to, and only for moments that
+// matter. Android only; iPhones have no vibration API on the web. Browsers refuse it
+// before the first tap, so it is skipped until then.
+function buzz(pattern) {
+  try { if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(pattern); } catch {}
+}
+// Final scores count up from zero: once per game, at the one moment that earns it.
+function countUp(node, to) {
+  if (reduceMotion.matches || document.hidden || to <= 0) { node.textContent = to; return; }
+  const start = performance.now() + 300, dur = 650;
+  node.textContent = 0;
+  const frame = (t) => {
+    const k = Math.min(1, Math.max(0, (t - start) / dur));
+    node.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
+// ---------- connection: a plain WebSocket that reconnects by itself
+let pingTimer, pongTimer, rcTimer;
+function connect(code, intent, resume = false) {
+  Object.assign(S, { code, intent, seated: false, resume, closing: false, retry: 0, room: null,
+                     sawGuest: false, revealFor: null, overFor: null });
+  openSocket();
+}
+function openSocket() {
+  clearTimeout(S.retryTimer);
+  if (S.ws) { const old = S.ws; S.ws = null; try { old.close(); } catch {} }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/${S.code}`);
+  S.ws = ws;
+  ws.onopen = () => {
+    if (S.ws !== ws) return;
+    // Until the server has seated us we repeat the original intent; after that we only ever rejoin.
+    ws.send(JSON.stringify({ type: S.seated ? 'join' : S.intent, name: S.name, playerId }));
+    clearInterval(pingTimer);
+    pingTimer = setInterval(heartbeat, 15000);
+  };
+  ws.onmessage = (e) => {
+    if (S.ws !== ws) return;
+    if (e.data === 'pong') { clearTimeout(pongTimer); return; }
+    let msg; try { msg = JSON.parse(e.data); } catch { return; }
+    onMessage(msg);
+  };
+  ws.onclose = (e) => {
+    if (S.ws !== ws) return;
+    S.ws = null; clearInterval(pingTimer); clearTimeout(pongTimer);
+    if (S.closing) return;
+    if (e.code === 4000) return leaveLocal('This game is now open in another tab.');
+    if (e.code === 4002) return leaveLocal('The room was closed.');
+    if (e.code === 4001) return; // the error message that came just before already handled it
+    scheduleReconnect();
+  };
+  ws.onerror = () => {};
+}
+function scheduleReconnect() {
+  const delay = Math.min(4000, 400 * 2 ** S.retry++);
+  clearTimeout(rcTimer);
+  rcTimer = setTimeout(() => { if (!S.ws || S.ws.readyState !== 1 || !S.seated) $('reconnecting').hidden = S.closing || !S.code; }, 700);
+  S.retryTimer = setTimeout(openSocket, delay);
+}
+// Phones leave sockets looking open after they have died. Ask, and reconnect if nobody answers.
+function heartbeat() {
+  const ws = S.ws;
+  if (!ws || ws.readyState !== 1) return;
+  try { ws.send('ping'); } catch {}
+  clearTimeout(pongTimer);
+  pongTimer = setTimeout(() => { if (S.ws === ws) { try { ws.close(); } catch {} S.ws = null; scheduleReconnect(); } }, 5000);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !S.code || S.closing) return;
+  if (!S.ws || S.ws.readyState > 1) { S.retry = 0; openSocket(); } else heartbeat();
+  keepAwake();
+});
+window.addEventListener('online', () => { if (S.code && !S.closing && (!S.ws || S.ws.readyState > 1)) { S.retry = 0; openSocket(); } });
+
+function send(obj) {
+  if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj));
+}
+function leaveLocal(message) {
+  S.closing = true;
+  clearTimeout(S.retryTimer); clearTimeout(rcTimer); clearInterval(pingTimer); clearTimeout(pongTimer);
+  if (S.ws) { const ws = S.ws; S.ws = null; try { ws.close(); } catch {} }
+  Object.assign(S, { room: null, code: null, seated: false, local: 'home' });
+  store.del('room');
+  closeForehead(); releaseWake(); clearConfetti();
+  $('reconnecting').hidden = true;
+  render();
+  if (message) toast(message);
+}
+function leaveRoom() { send({ type: 'leave' }); leaveLocal(); }
+
+function onMessage(msg) {
+  if (msg.type === 'room_update') {
+    const prev = S.room;
+    S.room = msg; S.seated = true; S.retry = 0; S.createTries = 0;
+    S.offset = msg.serverNow - Date.now();
+    clearTimeout(rcTimer); $('reconnecting').hidden = true;
+    store.set('room', { code: S.code, at: Date.now() });
+    const me = meOf(msg);
+    if (msg.status !== 'playing' || me.done) closeForehead();
+    if (prev && prev.status === 'playing' && msg.status === 'reveal' && me.done === 'timeout') buzz(250); // time ran out on my forehead
+    if (prev && prev.status === 'waiting' && !prev.guest && msg.guest && msg.you === 'host') buzz(20);    // my friend just joined
+    if (msg.status === 'gameover') recordGame(msg);
+    render();
+    return;
+  }
+  if (msg.type === 'player_guessed') {
+    if (S.room && msg.who !== S.room.you) toast(`${msg.name} got it! +${msg.points}`);
+    return;
+  }
+  if (msg.type === 'error') {
+    const fatal = ['not_found', 'full', 'code_taken', 'bad_message'].includes(msg.code) && !S.seated;
+    if (!fatal && !['not_found', 'full'].includes(msg.code)) return toast(msg.message);
+    if (msg.code === 'code_taken' && S.intent === 'create' && S.createTries++ < 5) {
+      S.code = newCode(); return openSocket();
+    }
+    const wasResume = S.resume && !S.seated, wasSeated = S.seated, wasJoin = S.intent === 'join' && !S.seated;
+    leaveLocal();
+    if (wasResume) return;                      // an old room that no longer exists: say nothing
+    if (wasSeated) toast('You were away too long, so that game ended.');
+    else if (wasJoin) { S.local = 'join'; render(); $('join-error').textContent = msg.message; shake($('join-card')); }
+    else toast(msg.message);
+  }
+}
+
+// ---------- rendering
+function render() {
+  const r = S.room;
+  if (!r) { show(S.local); renderLocal(); return; }
+  const me = meOf(r), opp = oppOf(r);
+  if (opp) { S.oppName = opp.name; S.oppScore = opp.score; }
+
+  setAll('.js-me-name', me.name); setScores('.js-me-score', me.score);
+  setAll('.js-opp-name', opp ? opp.name : S.oppName); setScores('.js-opp-score', opp ? opp.score : S.oppScore);
+  setAll('.js-round', `${r.round}/${r.totalRounds}`);
+  for (const b of all('.js-opp-offline')) {
+    b.hidden = !(opp && !opp.connected);
+    if (opp) b.textContent = `${opp.name} lost connection. Holding their place for a minute.`;
+  }
+
+  if (r.status === 'waiting') { show('lobby'); renderLobby(r, me, opp); }
+  else if (r.status === 'playing' && !me.done) { show('playing'); renderPlaying(r, me, opp); }
+  else if (r.status === 'playing') { show('waiting'); renderWaiting(r, me, opp); }
+  else if (r.status === 'reveal') { show('reveal'); renderReveal(r, me, opp); }
+  else { show('gameover'); renderOver(r, me, opp); }
+
+  if (r.status === 'playing') keepAwake(); else releaseWake();
+  if (r.status !== 'gameover') clearConfetti();
+  tickTimer();
+}
+
+function renderLocal() {
+  if ($('name-home').value !== S.name && document.activeElement !== $('name-home')) $('name-home').value = S.name;
+  if ($('name-join').value !== S.name && document.activeElement !== $('name-join')) $('name-join').value = S.name;
+  if (S.local === 'stats') renderStats();
+  if (S.local === 'history') renderHistory();
+}
+
+function buildChips(box, values, suffix, key) {
+  for (const v of values) {
+    const b = el('button', 'chip', v + suffix);
+    b.type = 'button'; b.dataset.value = v;
+    b.addEventListener('click', () => send({ type: 'settings', [key]: v }));
+    box.appendChild(b);
+  }
+}
+buildChips($('chips-rounds'), [3, 5, 7, 10], '', 'totalRounds');
+buildChips($('chips-time'), [30, 60, 90, 120], 's', 'roundTime');
+
+function renderLobby(r, me, opp) {
+  $('room-code').textContent = S.code;
+  const isHost = r.you === 'host';
+  if (!r.guest && S.qrFor !== S.code) { S.qrOk = drawQR($('qr'), inviteUrl()); S.qrFor = S.code; }
+  $('qr-wrap').hidden = !!r.guest || !S.qrOk;
+  const list = $('lobby-players'); list.replaceChildren();
+  const row = (p, role, mine) => {
+    const d = el('div', 'player');
+    d.append(el('span', 'dot' + (p.connected ? '' : ' off')), el('span', '', p.name));
+    d.append(el('span', 'tag', (role === 'host' ? 'Host' : 'Guest') + (mine ? ', you' : '') + (p.connected ? '' : ', away')));
+    return d;
+  };
+  list.append(row(r.host, 'host', isHost));
+  if (r.guest) {
+    const g = row(r.guest, 'guest', !isHost);
+    if (!S.sawGuest) g.classList.add('enter'); // the list is rebuilt on every update; only the arrival animates
+    list.append(g);
+  }
+  S.sawGuest = !!r.guest;
+  if (!r.guest) { const d = el('div', 'player dim'); d.append(el('span', 'dot wait'), el('span', '', 'Waiting for player 2…')); list.append(d); }
+
+  for (const b of all('#chips-rounds .chip')) { b.setAttribute('aria-pressed', String(+b.dataset.value === r.totalRounds)); b.disabled = !isHost; }
+  for (const b of all('#chips-time .chip')) { b.setAttribute('aria-pressed', String(+b.dataset.value === r.roundTime)); b.disabled = !isHost; }
+  $('settings-note').hidden = isHost;
+
+  const ready = !!(r.guest && r.guest.connected);
+  $('btn-start').hidden = !isHost;
+  $('btn-start').disabled = !ready;
+  $('lobby-status').textContent = isHost
+    ? (ready ? `${r.guest.name} is in. Ready when you are.` : 'Share the code with your friend.')
+    : `Waiting for ${r.host.name} to start the game.`;
+}
+
+function renderPlaying(r, me, opp) {
+  $('q-count').textContent = me.questions;
+  const worth = scoreFor(me.questions, me.hintUsed);
+  $('q-worth').textContent = `worth ${worth} point${worth === 1 ? '' : 's'} right now`;
+  $('btn-q-minus').disabled = me.questions === 0;
+  $('hint-chip').hidden = !me.hintUsed;
+  if (me.hintUsed && me.country) $('hint-chip').textContent = `Your continent: ${me.country.continent}`;
+  $('btn-hint').hidden = me.hintUsed;
+  resetGiveUp();
+  let line = '';
+  if (opp) {
+    if (opp.done === 'guessed') line = `${opp.name} got it for ${opp.points} points.`;
+    else if (opp.done) line = `${opp.name} gave up.`;
+    else line = `${opp.name} has asked ${opp.questions} question${opp.questions === 1 ? '' : 's'}.`;
+  }
+  $('opp-status').textContent = line;
+}
+
+function renderWaiting(r, me, opp) {
+  $('wait-flag').textContent = me.country ? me.country.flag : '';
+  const h = $('wait-headline');
+  if (me.done === 'guessed') { h.textContent = `You got it! +${me.points}`; h.className = 'headline teal'; }
+  else if (me.done === 'giveup') { h.textContent = 'You gave up'; h.className = 'headline red'; }
+  else { h.textContent = 'Time is up'; h.className = 'headline red'; }
+  $('wait-sub').textContent = me.country ? `Your country was ${me.country.name}.` : '';
+  $('wait-for').textContent = `Waiting for ${opp ? opp.name : S.oppName}…`;
+}
+
+function renderReveal(r, me, opp) {
+  $('reveal-title').textContent = `Round ${r.round} of ${r.totalRounds}`;
+  const box = $('reveal-rows');
+  const row = (p, mine) => {
+    const d = el('div', 'rv enter');
+    d.append(el('span', 'flag', p.country ? p.country.flag : ''));
+    const mid = el('div', 'mid');
+    mid.append(el('div', 'who', mine ? 'You had' : `${p.name} had`), el('div', 'country', p.country ? p.country.name : ''));
+    const out = el('div', 'out' + (p.done === 'guessed' ? '' : ' miss'));
+    if (p.done === 'guessed') {
+      const q = p.questions + (p.hintUsed ? 2 : 0);
+      out.append(el('b', '', `+${p.points}`), document.createTextNode(`${q} question${q === 1 ? '' : 's'}`));
+    } else out.append(el('b', '', p.done === 'giveup' ? 'Gave up' : 'Time up'), document.createTextNode('0 points'));
+    d.append(mid, out);
+    return d;
+  };
+  // Built once per round: a "ready" update must not replay the entrance.
+  const key = `${r.gameId}:${r.round}`;
+  if (S.revealFor !== key) {
+    S.revealFor = key;
+    box.replaceChildren(row(me, true));
+    if (opp) box.append(row(opp, false));
+  }
+
+  const last = r.round >= r.totalRounds;
+  const btn = $('btn-next');
+  btn.textContent = me.ready ? 'Ready' : (last ? 'See final scores' : 'Next round');
+  btn.disabled = me.ready;
+  $('reveal-status').textContent = me.ready
+    ? `Waiting for ${opp ? opp.name : S.oppName}…`
+    : (opp && opp.ready ? `${opp.name} is ready.` : '');
+}
+
+function renderOver(r, me, opp) {
+  const mine = me.score, theirs = opp ? opp.score : S.oppScore, theirName = opp ? opp.name : S.oppName;
+  $('over-me-name').textContent = me.name; $('over-opp-name').textContent = theirName;
+  const overKey = `${r.gameId}:${r.endReason}`;
+  if (S.overFor !== overKey) {
+    S.overFor = overKey;
+    countUp($('over-me-score'), mine); countUp($('over-opp-score'), theirs);
+  }
+  const h = $('over-headline');
+  if (r.endReason === 'opponent_left') {
+    $('over-emoji').textContent = '👋'; h.textContent = `${theirName} left the game`; h.className = 'headline';
+    $('over-sub').textContent = 'This one does not count towards your stats.';
+    $('btn-again').textContent = 'Back to the lobby';
+  } else {
+    const won = mine > theirs, draw = mine === theirs;
+    $('over-emoji').textContent = draw ? '🤝' : '🏆';
+    h.textContent = draw ? 'It is a draw' : (won ? 'You win!' : `${theirName} wins`);
+    h.className = 'headline ' + (draw ? 'gold' : won ? 'teal' : 'red');
+    $('over-sub').textContent = `${r.totalRounds} rounds played.`;
+    $('btn-again').textContent = 'Play again';
+    if (won) startConfetti();
+  }
+}
+
+// ---------- the round clock (the server owns it; this only draws it)
+function tickTimer() {
+  const r = S.room;
+  if (!r || r.status !== 'playing' || !r.roundEndsAt) return;
+  const left = Math.max(0, r.roundEndsAt - (Date.now() + S.offset));
+  const secs = Math.ceil(left / 1000);
+  const ring = $('ring');
+  ring.style.setProperty('--p', Math.min(100, (left / (r.roundTime * 1000)) * 100).toFixed(1));
+  ring.classList.toggle('urgent', secs <= 10);
+  $('ring-num').textContent = secs;
+  $('wait-timer').textContent = `${secs} second${secs === 1 ? '' : 's'} left in this round`;
+}
+setInterval(tickTimer, 250); // the ring glides between these (CSS transition on --p)
+
+// ---------- forehead mode
+let fhTimer = null, fhWipe = null;
+function openForehead() {
+  const r = S.room; if (!r || r.status !== 'playing') return;
+  const me = meOf(r); if (me.done || !me.country) return;
+  clearTimeout(fhWipe);
+  $('fh-flag').textContent = me.country.flag;
+  $('fh-name').textContent = me.country.name;
+  $('fh-continent').textContent = me.country.continent;
+  const box = $('forehead');
+  // It grows out of the button that opened it, and later shrinks back into it.
+  const b = $('btn-forehead').getBoundingClientRect();
+  box.style.transformOrigin = `${b.left + b.width / 2}px ${b.top + b.height / 2}px`;
+  let n = 3;
+  $('fh-count').textContent = n;
+  box.dataset.stage = 'count'; box.classList.add('open'); box.setAttribute('aria-hidden', 'false');
+  clearInterval(fhTimer);
+  fhTimer = setInterval(() => {
+    n -= 1;
+    if (n <= 0) { clearInterval(fhTimer); fhTimer = null; box.dataset.stage = 'show'; buzz(25); }
+    else { $('fh-count').textContent = n; retrigger($('fh-count'), 'tick'); }
+  }, 1000);
+  keepAwake();
+}
+function closeForehead() {
+  clearInterval(fhTimer); fhTimer = null;
+  const box = $('forehead');
+  if (!box.classList.contains('open')) return;
+  box.classList.remove('open'); box.setAttribute('aria-hidden', 'true');
+  // The country stays for the short fade-out, then it is wiped from the page.
+  clearTimeout(fhWipe);
+  fhWipe = setTimeout(() => {
+    box.dataset.stage = 'count';
+    $('fh-flag').textContent = ''; $('fh-name').textContent = ''; $('fh-continent').textContent = '';
+  }, 200);
+}
+$('forehead').addEventListener('click', closeForehead);
+$('btn-forehead').addEventListener('click', openForehead);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeForehead(); });
+
+// ---------- keep the screen on during a round
+let wake = null;
+async function keepAwake() {
+  if (wake || !S.room || S.room.status !== 'playing' || !('wakeLock' in navigator)) return;
+  try { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } catch {}
+}
+function releaseWake() { if (wake) { try { wake.release(); } catch {} wake = null; } }
+
+// ---------- confetti: 40 divs, CSS does the falling
+function startConfetti() {
+  const box = $('confetti');
+  if (box.childElementCount) return;
+  const colors = ['#38d9a9', '#ffd43b', '#ff6b6b', '#b197fc', '#e2e8f0'];
+  for (let i = 0; i < 40; i++) {
+    const c = document.createElement('i');
+    c.style.left = Math.random() * 100 + 'vw';
+    c.style.background = colors[i % colors.length];
+    c.style.animationDuration = 2.4 + Math.random() * 2.2 + 's';
+    c.style.animationDelay = Math.random() * 1.2 + 's';
+    c.style.setProperty('--dx', (Math.random() * 120 - 60).toFixed(0) + 'px');
+    c.style.setProperty('--rot', (360 + Math.random() * 720).toFixed(0) + 'deg');
+    box.appendChild(c);
+  }
+}
+function clearConfetti() { $('confetti').replaceChildren(); }
+
+// ---------- stats and history (this device only)
+function recordGame(r) {
+  if (!r.gameId || store.get('lastGame') === r.gameId) return;
+  store.set('lastGame', r.gameId);
+  const me = meOf(r), opp = oppOf(r);
+  const mine = me.score, theirs = opp ? opp.score : S.oppScore;
+  const res = r.endReason === 'opponent_left' ? 'A' : mine > theirs ? 'W' : mine < theirs ? 'L' : 'D';
+  const hist = store.get('history', []);
+  hist.unshift({ t: Date.now(), opp: opp ? opp.name : S.oppName, my: mine, their: theirs, res });
+  store.set('history', hist.slice(0, 20));
+  if (res === 'A') return; // abandoned games do not touch wins or streaks
+  const st = store.get('stats', { played: 0, won: 0, streak: 0, best: 0 });
+  st.played += 1;
+  if (res === 'W') { st.won += 1; st.streak += 1; st.best = Math.max(st.best, st.streak); }
+  else if (res === 'L') st.streak = 0; // a draw leaves the streak alone
+  store.set('stats', st);
+}
+function renderStats() {
+  const st = store.get('stats', { played: 0, won: 0, streak: 0, best: 0 });
+  const box = $('stats-tiles'); box.replaceChildren();
+  const tile = (value, label, wide) => { const t = el('div', 'tile' + (wide ? ' wide' : '')); t.append(el('b', '', value), el('span', '', label)); return t; };
+  const rate = st.played ? Math.round((st.won / st.played) * 100) + '%' : '0%';
+  box.append(tile(st.played, 'Games played'), tile(st.won, 'Games won'), tile(rate, 'Win rate', true),
+             tile(st.streak, 'Current streak'), tile(st.best, 'Best streak'));
+  $('stats-empty').hidden = st.played > 0;
+}
+function renderHistory() {
+  const hist = store.get('history', []);
+  const box = $('hist-list'); box.replaceChildren();
+  const word = { W: 'Won', L: 'Lost', D: 'Draw', A: 'Opponent left' };
+  for (const g of hist) {
+    const row = el('div', 'hrow');
+    const mid = el('div', 'mid');
+    const date = new Date(g.t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    mid.append(el('div', '', `vs ${g.opp}`), el('div', 'dim small', `${date}, ${word[g.res] || ''}`));
+    row.append(el('span', 'badge ' + g.res, g.res === 'A' ? '–' : g.res), mid, el('span', 'score', `${g.my}–${g.their}`));
+    box.append(row);
+  }
+  $('hist-empty').hidden = hist.length > 0;
+}
+
+// ---------- buttons
+function takeName(input, errorBox) {
+  const name = input.value.replace(/\s+/g, ' ').trim().slice(0, 16);
+  if (!name) { errorBox.textContent = 'Enter your name first.'; shake(input); input.focus(); return null; }
+  errorBox.textContent = ''; S.name = name; store.set('name', name);
+  return name;
+}
+for (const id of ['name-home', 'name-join']) {
+  $(id).addEventListener('input', (e) => { S.name = e.target.value.trim(); store.set('name', S.name); });
+}
+$('btn-create').addEventListener('click', () => {
+  if (!takeName($('name-home'), $('home-error'))) return;
+  S.createTries = 0; connect(newCode(), 'create');
+});
+$('name-home').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+$('btn-to-join').addEventListener('click', () => { $('home-error').textContent = ''; $('join-error').textContent = ''; S.local = 'join'; render(); });
+$('code-input').addEventListener('input', (e) => { e.target.value = cleanCode(e.target.value); $('join-error').textContent = ''; });
+function doJoin() {
+  if (!takeName($('name-join'), $('join-error'))) return;
+  const code = cleanCode($('code-input').value);
+  if (code.length !== 5) { $('join-error').textContent = 'The code has 5 characters.'; shake($('code-input')); return; }
+  connect(code, 'join');
+}
+$('btn-join').addEventListener('click', doJoin);
+$('code-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
+$('name-join').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('code-input').focus(); });
+$('btn-join-back').addEventListener('click', () => { S.local = 'home'; render(); });
+$('btn-stats').addEventListener('click', () => { S.local = 'stats'; render(); });
+$('btn-history').addEventListener('click', () => { S.local = 'history'; render(); });
+for (const b of all('.js-back-home')) b.addEventListener('click', () => { S.local = 'home'; render(); });
+
+const inviteUrl = () => `${location.origin}/?join=${S.code}`;
+async function copy(text, done) {
+  try { await navigator.clipboard.writeText(text); toast(done); } catch { toast(`Room code: ${S.code}`); }
+}
+$('room-code').addEventListener('click', () => copy(S.code, 'Code copied'));
+$('btn-share').addEventListener('click', async () => {
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Guess My Country', text: `Join my room. The code is ${S.code}`, url: inviteUrl() }); } catch {}
+  } else copy(inviteUrl(), 'Invite link copied');
+});
+$('btn-start').addEventListener('click', () => send({ type: 'start' }));
+$('btn-leave-lobby').addEventListener('click', leaveRoom);
+$('btn-rc-leave').addEventListener('click', () => leaveLocal());
+
+function bump(delta) {
+  const r = S.room; if (!r || r.status !== 'playing') return;
+  const me = meOf(r); if (me.done) return;
+  me.questions = Math.max(0, Math.min(99, me.questions + delta)); // drawn at once; the server confirms
+  send({ type: 'question', delta });
+  render();
+  retrigger($('q-count'), 'tick');
+}
+$('btn-q-plus').addEventListener('click', () => bump(1));
+$('btn-q-minus').addEventListener('click', () => bump(-1));
+$('btn-hint').addEventListener('click', () => send({ type: 'hint' }));
+$('btn-got').addEventListener('click', () => { buzz([15, 40, 25]); send({ type: 'guessed' }); });
+
+// Give up is hold-to-confirm: one stray thumb should not throw away a round. The
+// button fills while held (1 second) and snaps back if let go early.
+const giveUp = $('btn-giveup');
+const GIVE_UP = 'Hold to give up';
+let holdTimer = null, giveUpArmed = false, giveUpTimer = null;
+function resetGiveUp() { if (!giveUpArmed && !holdTimer) giveUp.textContent = GIVE_UP; }
+function holdEnd(early) {
+  if (!holdTimer) return;
+  clearTimeout(holdTimer); holdTimer = null;
+  giveUp.classList.remove('holding');
+  if (early) { giveUp.textContent = 'Keep holding to give up'; setTimeout(resetGiveUp, 1600); }
+}
+giveUp.addEventListener('pointerdown', (e) => {
+  if (e.button || holdTimer) return;          // one finger at a time
+  try { giveUp.setPointerCapture(e.pointerId); } catch {}
+  giveUp.classList.add('holding');
+  holdTimer = setTimeout(() => { holdEnd(false); buzz(40); send({ type: 'giveup' }); }, 1000);
+});
+for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) giveUp.addEventListener(ev, () => holdEnd(true));
+giveUp.addEventListener('contextmenu', (e) => e.preventDefault());
+// Keyboard and switch users cannot hold: for them it is press, then press again.
+giveUp.addEventListener('click', (e) => {
+  if (e.detail !== 0) return;                 // a real pointer already went through the hold
+  if (giveUpArmed) { giveUpArmed = false; clearTimeout(giveUpTimer); giveUp.textContent = GIVE_UP; return send({ type: 'giveup' }); }
+  giveUpArmed = true; giveUp.textContent = 'Press again to give up this round';
+  giveUpTimer = setTimeout(() => { giveUpArmed = false; giveUp.textContent = GIVE_UP; }, 3000);
+});
+$('btn-next').addEventListener('click', () => send({ type: 'ready_next' }));
+$('btn-quit').addEventListener('click', () => { if (confirm('Leave this game? It ends for both of you.')) leaveRoom(); });
+$('btn-again').addEventListener('click', () => send({ type: 'playagain' }));
+$('btn-home').addEventListener('click', leaveRoom);
+
+// ---------- home screen demo card: cycles a few countries
+const DEMO = [['🇯🇵', 'Japan'], ['🇧🇷', 'Brazil'], ['🇴🇲', 'Oman'], ['🇩🇪', 'Germany'], ['🇳🇬', 'Nigeria'], ['🇦🇺', 'Australia'], ['🇲🇽', 'Mexico']];
+let demoAt = 0;
+if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  setInterval(() => {
+    if (currentScreen !== 'home' || document.hidden) return;
+    demoAt = (demoAt + 1) % DEMO.length;
+    const d = $('demo');
+    $('demo-flag').textContent = DEMO[demoAt][0]; $('demo-name').textContent = DEMO[demoAt][1];
+    d.classList.remove('swap'); void d.offsetWidth; d.classList.add('swap');
+  }, 2600);
+}
+
+// ---------- start-up: an invite link, or a game this phone was already in
+const invited = cleanCode(params.get('join') || '');
+if (params.has('join')) {
+  params.delete('join');
+  const rest = params.toString();
+  history.replaceState(null, '', location.pathname + (rest ? '?' + rest : ''));
+}
+const saved = store.get('room');
+if (invited.length === 5) {
+  S.local = 'join';
+  $('code-input').value = invited;
+} else if (saved && saved.code && Date.now() - saved.at < 15 * 60 * 1000 && S.name) {
+  connect(saved.code, 'join', true);
+} else if (saved) store.del('room');
+render();
+})();
+</script>
+</body>
+</html>

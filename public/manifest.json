@@ -1,0 +1,13 @@
+{
+  "name": "Guess My Country",
+  "short_name": "GuessCountry",
+  "description": "Two phones, one country on your forehead. Ask yes/no questions until you guess it.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0e1a",
+  "theme_color": "#38d9a9",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
