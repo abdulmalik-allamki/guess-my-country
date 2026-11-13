@@ -5,6 +5,8 @@ the other joins with a 5-character code or by scanning the QR code. Each phone i
 given a country. You hold your phone on your forehead so your friend can read it,
 and ask yes/no questions until you guess it. Fewer questions, more points.
 
+Play it: <https://guess-my-country.0haramygamer0.workers.dev>
+
 The full spec is [docs/PRD.md](docs/PRD.md).
 
 ## How it is built
